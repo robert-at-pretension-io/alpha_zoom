@@ -1,27 +1,71 @@
 // fn main() {
-    // neural network arch
-    // Random initialization of weights
+// neural network arch
+// Random initialization of weights
 
+// MCTS
+// Battle the current neural network against the best neural network
+// Sample from the probability distribution over the actions for a particular state
+// Build tree, use NN to evaluate nodes
+//
 
-    // MCTS
-        // Battle the current neural network against the best neural network
-            // Sample from the probability distribution over the actions for a particular state
-            // Build tree, use NN to evaluate nodes
-                // 
+// If the new network wins >= 55% of games, use this new network for self play to create training data for the neural network. Otherwise, use self play of the previous network to create training data for the neural network.
 
-        
-        // If the new network wins >= 55% of games, use this new network for self play to create training data for the neural network. Otherwise, use self play of the previous network to create training data for the neural network.
-
-    // Loss function to train the neural network
+// Loss function to train the neural network
 
 // }
-
 
 extern crate tch;
 use tch::nn;
 use tch::Device;
 use tch::Tensor;
 use tch::nn::Module;
+
+impl Board {
+    pub fn to_tensor(&self) -> [[[u8; 8]; 8]; 8] {
+        let mut tensor = [[[0u8; 8]; 8]; 8];
+
+        for piece in self.pieces.iter() {
+            let x = piece.position.x as usize;
+            let y = piece.position.y as usize;
+
+            // Encode presence
+            tensor[0][y][x] = 1;
+
+            // Encode color
+            tensor[1][y][x] = match piece.color {
+                Color::White => 1,
+                Color::Black => 0,
+            };
+
+            // Encode height
+            match piece.height {
+                Height::One => {
+                    tensor[2][y][x] = 1;
+                }
+                Height::Two => {
+                    tensor[3][y][x] = 1;
+                }
+                Height::Three => {
+                    tensor[4][y][x] = 1;
+                }
+                Height::Dead => {}
+            };
+        }
+
+        // Encode scores and other game states in remaining slices...
+        // For example, using slices 5 and 6 for white and black scores
+        for y in 0..8 {
+            for x in 0..8 {
+                tensor[5][y][x] = self.white_score;
+                tensor[6][y][x] = self.black_score;
+            }
+        }
+
+        // Encode additional information in slice 7 if necessary...
+
+        tensor
+    }
+}
 
 // A neural network with a shared convolutional base and two heads: policy and value.
 #[derive(Debug)]
@@ -34,7 +78,13 @@ struct DualHeadedConvNet {
 impl DualHeadedConvNet {
     fn new(vs: &nn::Path) -> DualHeadedConvNet {
         // Define the shared convolutional layer.
-        let shared_conv_layer = nn::conv2d(vs, 8 /* in_channels */, 32 /* out_channels */, 3 /* ks */, nn::ConvConfig::default());
+        let shared_conv_layer = nn::conv2d(
+            vs,
+            8 /* in_channels */,
+            32 /* out_channels */,
+            3 /* ks */,
+            nn::ConvConfig::default()
+        );
 
         // Define the policy head.
         // Assuming a game with at most 10 possible moves from any state.
@@ -69,7 +119,7 @@ fn compute_loss(
     predictions: (Tensor, Tensor),
     true_outcomes: Tensor,
     policy_targets: Tensor,
-    legal_moves_mask: Tensor,
+    legal_moves_mask: Tensor
 ) -> Tensor {
     let (policy_logits, value_preds) = predictions;
 
@@ -103,10 +153,6 @@ fn main() {
     println!("Policy vector size: {:?}", policy.size());
     println!("Value size: {:?}", value.size());
 
-
-
-
-
     // Create some example data that would come from your model and MCTS search
     let value_predictions = Tensor::from(0.5); // Dummy predicted value
     let true_outcomes = Tensor::from(1.0); // Dummy true outcome (e.g., win)
@@ -114,15 +160,16 @@ fn main() {
     let policy_targets = Tensor::rand(&[1, 10], tch::Kind::Float); // Dummy MCTS policy vector
 
     // Compute the loss
-    let loss = compute_loss((value_predictions, policy_logits), true_outcomes, policy_targets, policy_logits);
+    let loss = compute_loss(
+        (value_predictions, policy_logits),
+        true_outcomes,
+        policy_targets,
+        policy_logits
+    );
 
     // Print the loss
     println!("{:?}", loss);
-
-
-
 }
-
 
 // Boom and Zoom Setup and Rules:
 
@@ -130,7 +177,6 @@ fn main() {
 // The game is played on an 8 × 8 board, with 12 stackable black counters and 12 stackable white counters. Initially, each side places four stacks of height 3 on the four central squares of the home row:
 
 // The rules are simple: each player has four towers, three pieces high, that can "boom" (fire) or "zoom" (move) a number of spaces equal to the tower's height. But with those deceptively simple ingredients, veteran designer Ty Bomba has created his masterpiece, the game that he himself acknowledges as his own best design. The trick is that the game ends when only one player's pieces remain on the board, and the player who managed to exit the most pieces off of the opponent's side of the map wins. Because of this, players can't concentrate on just blocking/attacking or just advancing, but must strike a difficult and subtle balance between the two.
-
 
 // Boardgame State Representation
 
@@ -157,7 +203,6 @@ fn main() {
 // With this configuration, the neural network's input layer would expect an 8 x 8 x 8 tensor. Each 8 x 8 slice of this tensor corresponds to one of the channels described above.
 
 // Here's a visual example of what the channels for stack heights might look like for a simple 2x2 board, where '0' represents an empty cell, and '1' represents the presence of a stack of a specific height:
-
 
 // Output representation (policy vector)
 

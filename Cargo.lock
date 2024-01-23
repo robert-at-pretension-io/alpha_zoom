@@ -23,6 +23,7 @@ dependencies = [
 name = "alpha_zoom"
 version = "0.1.0"
 dependencies = [
+ "baz_core",
  "tch",
 ]
 
@@ -43,6 +44,11 @@ name = "base64ct"
 version = "1.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8c3c1a368f70d6cf7302d78f8f7093da241fb8e8807c05cc9e51a125895a6d5b"
+
+[[package]]
+name = "baz_core"
+version = "0.1.0"
+source = "git+https://github.com/dchiquito/boom-and-zoom#e288a1720a6228b19b57544ef1f7d2f52f3894eb"
 
 [[package]]
 name = "block-buffer"
