@@ -19,14 +19,15 @@ use tch::nn;
 use tch::Device;
 use tch::Tensor;
 use tch::nn::Module;
+extern crate baz_core;
+use baz_core::{Board, Winner};
 
-impl Board {
-    pub fn to_tensor(&self) -> [[[u8; 8]; 8]; 8] {
+    pub fn to_tensor(board : Board) -> Tensor {
         let mut tensor = [[[0u8; 8]; 8]; 8];
 
-        for piece in self.pieces.iter() {
-            let x = piece.position.x as usize;
-            let y = piece.position.y as usize;
+        for piece in board.pieces.clone().iter() {
+            let x = piece.position.x() as usize;
+            let y = piece.position.y() as usize;
 
             // Encode presence
             tensor[0][y][x] = 1;
@@ -56,16 +57,21 @@ impl Board {
         // For example, using slices 5 and 6 for white and black scores
         for y in 0..8 {
             for x in 0..8 {
-                tensor[5][y][x] = self.white_score;
-                tensor[6][y][x] = self.black_score;
+                tensor[5][y][x] = board.white_score;
+                tensor[6][y][x] = board.black_score;
             }
         }
 
         // Encode additional information in slice 7 if necessary...
 
-        tensor
+        let flat: Vec<u8> = tensor.iter().flat_map(|&x| x.iter().flat_map(|&y| y.iter().copied())).collect();
+
+        let actual_tensor = Tensor::of_slice(&flat).to_kind(Kind::Uint8);
+
+        let actual_tensor = actual_tensor.view([8,8,8]);
+        
+        actual_tensor
     }
-}
 
 // A neural network with a shared convolutional base and two heads: policy and value.
 #[derive(Debug)]
@@ -105,7 +111,7 @@ impl DualHeadedConvNet {
 impl nn::Module for DualHeadedConvNet {
     fn forward(&self, xs: &Tensor, train: bool) -> (Tensor, Tensor) {
         // Pass the input through the shared convolutional layer
-        let xs = xs.apply(&self.shared_conv_layer).flat_view(-1);
+        let xs = xs.apply(&self.shared_conv_layer).flat_view();
 
         // Get the policy and value predictions from their respective heads
         let policy_logits = xs.apply(&self.policy_head);
