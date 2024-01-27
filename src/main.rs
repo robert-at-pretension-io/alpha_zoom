@@ -20,9 +20,10 @@ use tch::Device;
 use tch::Tensor;
 use tch::nn::Module;
 extern crate baz_core;
-use baz_core::{Board, Winner};
+use baz_core::{Board, Height, Color};
+use tch::Kind;
 
-    pub fn to_tensor(board : Board) -> Tensor {
+    pub fn to_input_tensor(board : Board) -> Tensor {
         let mut tensor = [[[0u8; 8]; 8]; 8];
 
         for piece in board.pieces.clone().iter() {
@@ -64,11 +65,12 @@ use baz_core::{Board, Winner};
 
         // Encode additional information in slice 7 if necessary...
 
-        let flat: Vec<u8> = tensor.iter().flat_map(|&x| x.iter().flat_map(|&y| y.iter().copied())).collect();
+        let flat: Vec<u8> = tensor.iter().flatten().flatten().copied().collect();
 
-        let actual_tensor = Tensor::of_slice(&flat).to_kind(Kind::Uint8);
-
-        let actual_tensor = actual_tensor.view([8,8,8]);
+        let actual_tensor = Tensor::f_from_slice(&flat)
+        .expect("Failed to create tensor from slice")
+        .to_kind(Kind::Float) // Convert to Float Tensor
+        .view([8, 8, 8]); // Reshape the tensor
         
         actual_tensor
     }
@@ -94,10 +96,10 @@ impl DualHeadedConvNet {
 
         // Define the policy head.
         // Assuming a game with at most 10 possible moves from any state.
-        let policy_head = nn::linear(vs, 32 * 8 * 8, 10 /* num_moves */, Default::default());
+        let policy_head = nn::linear(vs, 32 * 6 * 6, 10 /* num_moves */, Default::default());
 
         // Define the value head.
-        let value_head = nn::linear(vs, 32 * 8 * 8, 1 /* output_value_size */, Default::default());
+        let value_head = nn::linear(vs, 32 * 6 * 6, 1 /* output_value_size */, Default::default());
 
         DualHeadedConvNet {
             shared_conv_layer,
@@ -109,15 +111,33 @@ impl DualHeadedConvNet {
 
 // The implementation of nn::Module requires defining the forward method.
 impl nn::Module for DualHeadedConvNet {
-    fn forward(&self, xs: &Tensor, train: bool) -> (Tensor, Tensor) {
-        // Pass the input through the shared convolutional layer
-        let xs = xs.apply(&self.shared_conv_layer).flat_view();
+    fn forward(&self, xs: &Tensor) -> Tensor {
+        let conv_output = xs.apply(&self.shared_conv_layer);
+        println!("Size after conv layer: {:?}", conv_output.size());
 
-        // Get the policy and value predictions from their respective heads
-        let policy_logits = xs.apply(&self.policy_head);
-        let value_pred = xs.apply(&self.value_head).sigmoid(); // use sigmoid to bound between 0 and 1
+        // Replace 32 * 8 * 8 with the correct dimensions based on the output size of shared_conv_layer
 
-        (policy_logits, value_pred)
+        let correct_dimensions = 1152;
+
+        let xs_reshaped = conv_output.view([-1, correct_dimensions]);
+
+        let policy_logits = xs_reshaped.apply(&self.policy_head);
+
+        println!("Size after policy head: {:?}", policy_logits.size());
+
+        let value_pred = xs_reshaped.apply(&self.value_head).sigmoid();
+
+        println!("Size after value head: {:?}", value_pred.size());
+
+        // Since value_pred is 1D, we need to add a dimension to it before concatenation
+        let value_pred_reshaped = value_pred.unsqueeze(0);
+
+// Reshape policy_logits to match the dimensions for concatenation
+let policy_logits_reshaped = policy_logits.view([-1, 1, 10]); // Now it is [1, 1, 10]
+
+// Concatenate policy_logits_reshaped and value_pred_reshaped along the last dimension
+Tensor::cat(&[policy_logits_reshaped, value_pred_reshaped], 2)
+
     }
 }
 
@@ -130,7 +150,7 @@ fn compute_loss(
     let (policy_logits, value_preds) = predictions;
 
     // Value loss - mean squared error.
-    let value_loss = (&value_preds - &true_outcomes).pow(2).mean(Kind::Float);
+    let value_loss = (&value_preds - &true_outcomes).pow(&Tensor::from(2)).mean(Kind::Float);
 
     // Policy loss - masked cross-entropy loss.
     let policy_probs = (&policy_logits * &legal_moves_mask).softmax(-1, Kind::Float); // Mask and softmax
@@ -140,6 +160,8 @@ fn compute_loss(
     let total_loss = value_loss + policy_loss;
     total_loss
 }
+
+use crate::tch::IndexOp;
 
 fn main() {
     // Use the CUDA device if available, otherwise CPU
@@ -152,27 +174,42 @@ fn main() {
     // Create a dummy input tensor representing the board state
     let input = Tensor::randn(&[1, 8, 8, 8], (tch::Kind::Float, device));
 
+    println!("Input (boardgame shape) is: {:?}", input.size());
+
     // Forward pass to get the policy and value
-    let (policy, value) = net.forward_t(&input, /* train */ false);
+    // let (policy, value) = net.forward(&input);
+
+
+    let result = net.forward(&input);
+
+
+// Extract policy_logits: take the first 10 elements of the last dimension
+let policy_logits = result.i((.., .., 0..10)).squeeze();
+
+// Extract value_pred: take the last element of the last dimension
+let value_pred = result.i((.., .., 10)).squeeze();
+
+    // If you need to convert value_pred to a scalar float
+    let _value_pred_scalar = value_pred.double_value(&[]);
 
     // Print out the size of the policy and value outputs
-    println!("Policy vector size: {:?}", policy.size());
-    println!("Value size: {:?}", value.size());
+    println!("Policy vector size: {:?}", policy_logits.size());
+    println!("Value size: {:?}", value_pred.size());
 
     // Create some example data that would come from your model and MCTS search
     let value_predictions = Tensor::from(0.5); // Dummy predicted value
     let true_outcomes = Tensor::from(1.0); // Dummy true outcome (e.g., win)
-    let policy_logits = Tensor::randn(&[1, 10], tch::Kind::Float); // Dummy logits for 10 possible actions
-    let policy_targets = Tensor::rand(&[1, 10], tch::Kind::Float); // Dummy MCTS policy vector
+    let policy_logits = Tensor::randn(&[1, 10], (tch::Kind::Float, device)); // Dummy logits for 10 possible actions
+    let policy_targets = Tensor::rand(&[1, 10], (tch::Kind::Float, device)); // Dummy MCTS policy vector
 
-    // Compute the loss
+    let policy_logits_clone = policy_logits.shallow_clone();
     let loss = compute_loss(
         (value_predictions, policy_logits),
         true_outcomes,
         policy_targets,
-        policy_logits
+        policy_logits_clone
     );
-
+    
     // Print the loss
     println!("{:?}", loss);
 }
