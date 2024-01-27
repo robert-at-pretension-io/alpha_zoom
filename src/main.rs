@@ -14,6 +14,9 @@
 
 // }
 
+// 4 potential pieces * ((3 height * 6 directions boom) + (3 height * 6 directions zoom)) = 144
+const POLICY_DIMENSIONS: i64 = ((3*6) + (3*6))*4;
+
 extern crate tch;
 use tch::nn;
 use tch::Device;
@@ -94,9 +97,9 @@ impl DualHeadedConvNet {
             nn::ConvConfig::default()
         );
 
-        // Define the policy head.
-        // Assuming a game with at most 10 possible moves from any state.
-        let policy_head = nn::linear(vs, 32 * 6 * 6, 10 /* num_moves */, Default::default());
+        // The policy head input dim is determined by the output size of the shared_conv_layer (which is in turn determined by the input size of the initial dimensions).
+
+        let policy_head = nn::linear(vs, 32 * 6 * 6, POLICY_DIMENSIONS /* num_moves */, Default::default());
 
         // Define the value head.
         let value_head = nn::linear(vs, 32 * 6 * 6, 1 /* output_value_size */, Default::default());
@@ -133,7 +136,7 @@ impl nn::Module for DualHeadedConvNet {
         let value_pred_reshaped = value_pred.unsqueeze(0);
 
 // Reshape policy_logits to match the dimensions for concatenation
-let policy_logits_reshaped = policy_logits.view([-1, 1, 10]); // Now it is [1, 1, 10]
+let policy_logits_reshaped = policy_logits.view([-1, 1, POLICY_DIMENSIONS]); // Now it is [1, 1, 10]
 
 // Concatenate policy_logits_reshaped and value_pred_reshaped along the last dimension
 Tensor::cat(&[policy_logits_reshaped, value_pred_reshaped], 2)
@@ -161,6 +164,8 @@ fn compute_loss(
     total_loss
 }
 
+// fn create_mask_from
+
 use crate::tch::IndexOp;
 
 fn main() {
@@ -184,10 +189,10 @@ fn main() {
 
 
 // Extract policy_logits: take the first 10 elements of the last dimension
-let policy_logits = result.i((.., .., 0..10)).squeeze();
+let policy_logits = result.i((.., .., 0..POLICY_DIMENSIONS)).squeeze();
 
 // Extract value_pred: take the last element of the last dimension
-let value_pred = result.i((.., .., 10)).squeeze();
+let value_pred = result.i((.., .., POLICY_DIMENSIONS)).squeeze();
 
     // If you need to convert value_pred to a scalar float
     let _value_pred_scalar = value_pred.double_value(&[]);
@@ -203,6 +208,9 @@ let value_pred = result.i((.., .., 10)).squeeze();
     let policy_targets = Tensor::rand(&[1, 10], (tch::Kind::Float, device)); // Dummy MCTS policy vector
 
     let policy_logits_clone = policy_logits.shallow_clone();
+
+
+
     let loss = compute_loss(
         (value_predictions, policy_logits),
         true_outcomes,
