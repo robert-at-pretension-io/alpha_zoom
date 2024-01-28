@@ -18,6 +18,8 @@
 const POLICY_DIMENSIONS: i64 = ((3*6) + (3*6))*4;
 
 extern crate tch;
+use baz_core::Piece;
+use baz_core::Position;
 use tch::nn;
 use tch::Device;
 use tch::Tensor;
@@ -25,6 +27,66 @@ use tch::nn::Module;
 extern crate baz_core;
 use baz_core::{Board, Height, Color};
 use tch::Kind;
+
+
+
+pub fn flip(board : Board) -> Board {
+
+    fn invert_piece(piece: Piece) -> Piece {
+        let old_position = piece.position;
+        let old_color = piece.color;
+
+        let max_x = 7;
+        let max_y = 7;
+
+        let new_x = max_x - old_position.x();
+        let new_y = max_y - old_position.y();
+
+        let new_position = Position::new(new_x, new_y);
+
+        let new_color = match old_color {
+            Color::White => Color::Black,
+            Color::Black => Color::White,
+        };
+
+        Piece {
+            position: new_position,
+            color: new_color,
+            height: piece.height,
+        }
+    }
+
+    let pieces = [
+  invert_piece(board.pieces[4]),
+  invert_piece(board.pieces[5]),
+  invert_piece(board.pieces[6]),
+  invert_piece(board.pieces[7]),
+  invert_piece(board.pieces[0]),
+  invert_piece(board.pieces[1]),
+  invert_piece(board.pieces[2]),
+  invert_piece(board.pieces[3]),
+];
+
+
+
+    let new_victory = match board.victory_by_concession {
+        Some(color) => {
+            match color {
+                Color::White => Some(Color::Black),
+                Color::Black => Some(Color::White),
+            }
+        }
+        None => None,
+    };
+
+    Board {
+        pieces: pieces,
+        white_score: board.black_score,
+        black_score: board.white_score,
+        victory_by_concession: new_victory,
+    }
+
+}
 
     pub fn to_input_tensor(board : Board) -> Tensor {
         let mut tensor = [[[0u8; 8]; 8]; 8];
